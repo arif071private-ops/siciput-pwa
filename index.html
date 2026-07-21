@@ -24,7 +24,8 @@
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
   import {
-    getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc,
+    initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+    collection, doc, getDoc, getDocs, setDoc, addDoc,
     updateDoc, deleteDoc, onSnapshot, query, orderBy, limit,
     serverTimestamp, writeBatch, where
   } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
@@ -57,11 +58,15 @@
   if (CONFIG_READY) {
     try {
       app = initializeApp(FIREBASE_CONFIG);
-      db = getFirestore(app);
+      // Offline persistence: data yang diinput saat sinyal lemah/putus tetap
+      // tersimpan di IndexedDB perangkat dan otomatis terkirim begitu online lagi.
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+      });
       window._db = db;
       window._fbModules = { collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, serverTimestamp, writeBatch, where };
       window._fbReady = true;
-      console.log('✅ Firebase terhubung');
+      console.log('✅ Firebase terhubung (offline persistence aktif)');
     } catch(e) {
       console.error('❌ Firebase gagal:', e);
       window._fbReady = false;
@@ -1805,9 +1810,12 @@ async function loadDataPasien(){
 
 async function saveDataPasien(){
   if(USE_FB()){
-    const promises = dataPasien.map(p => fbSetDoc('pasien', p.id, p));
-    await Promise.all(promises);
-    showSyncBar('🔄 Data pasien tersinkronisasi', 'ok');
+    const results = await Promise.all(dataPasien.map(p => fbSetDoc('pasien', p.id, p)));
+    if(results.every(r => r)){
+      showSyncBar('🔄 Data pasien tersinkronisasi', 'ok');
+    } else {
+      showSyncBar('⚠️ Sebagian data pasien GAGAL tersinkron — cek koneksi', 'err');
+    }
   } else {
     lsSet('pasien', dataPasien);
   }
@@ -1865,9 +1873,15 @@ async function saveRiwayat(arr){
 }
 async function addRiwayat(laporan){
   if(USE_FB()){
-    const id = await fbAddDoc('riwayat', laporan);
-    laporan._fbId = id;
-    showSyncBar('📋 Laporan tersinkronisasi', 'ok');
+    // Pakai doc ID = laporan.id (bukan auto-ID) supaya update/delete berikutnya
+    // bisa langsung target dokumennya tanpa query, dan aman di-retry (merge).
+    const ok = await fbSetDoc('riwayat', laporan.id, laporan);
+    if(ok){
+      laporan._fbId = String(laporan.id);
+      showSyncBar('📋 Laporan tersinkronisasi', 'ok');
+    } else {
+      showSyncBar('⚠️ Laporan GAGAL tersinkron — akan dicoba lagi otomatis saat online', 'err');
+    }
   } else {
     const arr = lsGet('riwayat', []);
     arr.unshift(laporan);
@@ -1876,12 +1890,11 @@ async function addRiwayat(laporan){
 }
 async function updateRiwayat(laporanId, patch){
   if(USE_FB()){
-    // Find by numeric id
-    const { collection, query, where, getDocs, updateDoc } = FB();
-    const snap = await getDocs(query(collection(DB(),'riwayat'), where('id','==',laporanId)));
-    if(!snap.empty){
-      await updateDoc(snap.docs[0].ref, patch);
+    const ok = await fbSetDoc('riwayat', laporanId, patch);
+    if(ok){
       showSyncBar('✏️ Laporan diperbarui', 'ok');
+    } else {
+      showSyncBar('⚠️ Update GAGAL tersimpan — cek koneksi lalu coba lagi', 'err');
     }
   } else {
     let arr = lsGet('riwayat', []);
@@ -1891,10 +1904,12 @@ async function updateRiwayat(laporanId, patch){
 }
 async function deleteRiwayat(laporanId){
   if(USE_FB()){
-    const { collection, query, where, getDocs, deleteDoc } = FB();
-    const snap = await getDocs(query(collection(DB(),'riwayat'), where('id','==',laporanId)));
-    if(!snap.empty) await deleteDoc(snap.docs[0].ref);
-    showSyncBar('🗑️ Laporan dihapus', 'ok');
+    const ok = await fbDeleteDoc('riwayat', laporanId);
+    if(ok){
+      showSyncBar('🗑️ Laporan dihapus', 'ok');
+    } else {
+      showSyncBar('⚠️ Hapus GAGAL — cek koneksi lalu coba lagi', 'err');
+    }
   } else {
     let arr = lsGet('riwayat', []);
     lsSet('riwayat', arr.filter(x => x.id !== laporanId));

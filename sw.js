@@ -2,17 +2,14 @@
 // dan tetap bisa dibuka saat sinyal lemah. Data pasien tetap live dari Firestore
 // (tidak di-cache di sini), jadi request ke firestore/googleapis dibiarkan lewat.
 
-const CACHE_NAME = 'siciput-shell-v2';
+const CACHE_NAME = 'siciput-shell-v1';
 const APP_SHELL = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/icons/icon-96.png',
-  '/icons/icon-144.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
-  '/icons/icon-maskable-512.png',
-  '/icons/apple-touch-icon.png'
+  '/icons/icon-maskable-512.png'
 ];
 
 self.addEventListener('install', (event) => {
